@@ -178,7 +178,7 @@ const snapshotAuditsSchema = new Schema<CheckAudits>(
 	{ _id: false }
 );
 
-const escalationRuleSchema = new Schema(
+const escalationRuleSchema = new Schema<EscalationRuleDocument>(
 	{
 		minutesBeforeEscalation: { type: Number, required: true },
 		escalationNotifications: [
