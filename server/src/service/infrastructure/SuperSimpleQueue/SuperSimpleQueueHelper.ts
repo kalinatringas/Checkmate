@@ -156,6 +156,35 @@ export class SuperSimpleQueueHelper implements ISuperSimpleQueueHelper {
 				// Step 5.  Get decisions
 				const decision = this.evaluateMonitorAction(statusChangeResult);
 
+				// Step 5.5. Handle escalation notifications for ongoing downtime
+				const prevStatus = statusChangeResult.prevStatus;
+				if (statusChangeResult.monitor.status === "down") {
+					this.handleEscalationNotifications(statusChangeResult.monitor, prevStatus, status).catch((error: unknown) => {
+						this.logger.error({
+							message: `Error handling escalation notifications for monitor ${statusChangeResult.monitor.id}: ${
+								error instanceof Error ? error.message : "Unknown error"
+							}`,
+							service: SERVICE_NAME,
+							method: "getMonitorJob",
+							stack: error instanceof Error ? error.stack : undefined,
+						});
+					});
+				}
+
+				// Step 5.6. Clear escalation state when monitor recovers
+				if (decision.shouldResolveIncident && statusChangeResult.monitor.status === "up") {
+					this.clearEscalationState(statusChangeResult.monitor.id, statusChangeResult.monitor.teamId).catch((error: unknown) => {
+						this.logger.error({
+							message: `Error clearing escalation state for monitor ${statusChangeResult.monitor.id}: ${
+								error instanceof Error ? error.message : "Unknown error"
+							}`,
+							service: SERVICE_NAME,
+							method: "getMonitorJob",
+							stack: error instanceof Error ? error.stack : undefined,
+						});
+					});
+				}
+
 				// Step 6. Handle notifications (best effort, continue even in event of failure, don't wait)
 				if (decision.shouldSendNotification) {
 					this.notificationsService.handleNotifications(statusChangeResult.monitor, status, decision).catch((error: unknown) => {
@@ -454,5 +483,91 @@ export class SuperSimpleQueueHelper implements ISuperSimpleQueueHelper {
 		}
 
 		return decision;
+	}
+
+	private async handleEscalationNotifications(monitor: Monitor, prevStatus: string, status: MonitorStatusResponse): Promise<void> {
+		// Only handle escalations if monitor is down
+		if (monitor.status !== "down" || !monitor.escalationRules || monitor.escalationRules.length === 0) {
+			return;
+		}
+
+		const now = Date.now();
+
+		// If monitor just went down, set lastDownTime
+		if (prevStatus !== "down" && !monitor.lastDownTime) {
+			await this.monitorsRepository.updateById(monitor.id, monitor.teamId, { lastDownTime: now });
+			return; // Don't send escalation on the initial down, wait for interval
+		}
+
+		const lastDownTime = monitor.lastDownTime || now;
+		const minutesDownSoFar = (now - lastDownTime) / (1000 * 60);
+
+		// Check each escalation rule
+		const updatedRules = [...(monitor.escalationRules || [])];
+		let shouldUpdate = false;
+
+		for (let i = 0; i < updatedRules.length; i++) {
+			const rule = updatedRules[i];
+			const lastEscalation = rule.lastEscalationSentAt || lastDownTime;
+			const minutesSinceLastEscalation = (now - lastEscalation) / (1000 * 60);
+
+			// Check if enough time has passed
+			if (minutesSinceLastEscalation >= rule.minutesBeforeEscalation) {
+				// Send escalation notifications
+				try {
+					await this.notificationsService.handleEscalationNotifications(
+						monitor,
+						rule.escalationNotifications,
+						status
+					);
+					updatedRules[i].lastEscalationSentAt = now;
+					shouldUpdate = true;
+
+					this.logger.info({
+						message: `Escalation notifications sent for monitor ${monitor.id}`,
+						service: SERVICE_NAME,
+						method: "handleEscalationNotifications",
+						details: {
+							minutesDown: Math.round(minutesDownSoFar),
+							rule: rule.minutesBeforeEscalation,
+						},
+					});
+				} catch (error: unknown) {
+					this.logger.error({
+						message: `Error sending escalation notifications for monitor ${monitor.id}: ${
+							error instanceof Error ? error.message : "Unknown error"
+						}`,
+						service: SERVICE_NAME,
+						method: "handleEscalationNotifications",
+						stack: error instanceof Error ? error.stack : undefined,
+					});
+				}
+			}
+		}
+
+		if (shouldUpdate) {
+			await this.monitorsRepository.updateById(monitor.id, monitor.teamId, {
+				escalationRules: updatedRules,
+			});
+		}
+	}
+
+	private async clearEscalationState(monitorId: string, teamId: string): Promise<void> {
+		// Clear lastDownTime and reset lastEscalationSentAt on all rules when monitor recovers
+		const updateData: Partial<Record<string, unknown>> = {
+			lastDownTime: undefined,
+		};
+
+		// Get the monitor to update escalation rules
+		const monitor = await this.monitorsRepository.getById(monitorId, teamId);
+		if (monitor && monitor.escalationRules && monitor.escalationRules.length > 0) {
+			const clearedRules = monitor.escalationRules.map((rule) => ({
+				...rule,
+				lastEscalationSentAt: undefined,
+			}));
+			updateData.escalationRules = clearedRules;
+		}
+
+		await this.monitorsRepository.updateById(monitorId, teamId, updateData);
 	}
 }

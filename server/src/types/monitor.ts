@@ -3,6 +3,12 @@ export type { CheckSnapshot } from "@/types/check.js";
 import type { GeoContinent, GroupedGeoCheck } from "@/types/geoCheck.js";
 export type { GeoContinent } from "@/types/geoCheck.js";
 
+export interface EscalationRule {
+	minutesBeforeEscalation: number;
+	escalationNotifications: string[];
+	lastEscalationSentAt?: number;
+}
+
 export const MonitorTypes = ["http", "ping", "pagespeed", "hardware", "docker", "port", "game", "grpc", "websocket", "unknown"] as const;
 export type MonitorType = (typeof MonitorTypes)[number];
 
@@ -54,6 +60,8 @@ export interface Monitor {
 	geoCheckLocations?: GeoContinent[];
 	geoCheckInterval?: number;
 	recentChecks: CheckSnapshot[];
+	escalationRules?: EscalationRule[];
+	lastDownTime?: number;
 	createdAt: string;
 	updatedAt: string;
 }

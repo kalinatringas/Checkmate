@@ -3,6 +3,12 @@ import type { PageSpeedGroupedCheck } from "@/Types/Check";
 import type { GeoContinent } from "@/Types/GeoCheck";
 export type { GeoContinent } from "@/Types/GeoCheck";
 
+export interface EscalationRule {
+	minutesBeforeEscalation: number;
+	escalationNotifications: string[];
+	lastEscalationSentAt?: number;
+}
+
 export const MonitorTypes = [
 	"http",
 	"ping",
@@ -77,6 +83,8 @@ export interface Monitor {
 	geoCheckLocations?: GeoContinent[];
 	geoCheckInterval?: number;
 	recentChecks: CheckSnapshot[];
+	escalationRules?: EscalationRule[];
+	lastDownTime?: number;
 	createdAt: string;
 	updatedAt: string;
 }

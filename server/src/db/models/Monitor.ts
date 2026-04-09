@@ -1,5 +1,5 @@
 import { Schema, model, Types } from "mongoose";
-import type { Monitor, MonitorMatchMethod, CheckSnapshot } from "@/types/monitor.js";
+import type { Monitor, MonitorMatchMethod, CheckSnapshot, EscalationRule } from "@/types/monitor.js";
 import { MonitorTypes, MonitorStatuses } from "@/types/monitor.js";
 import type {
 	CheckAudits,
@@ -16,14 +16,19 @@ import type {
 
 type CheckSnapshotDocument = Omit<CheckSnapshot, "createdAt"> & { createdAt: Date };
 
+type EscalationRuleDocument = Omit<EscalationRule, "escalationNotifications"> & {
+	escalationNotifications: Types.ObjectId[];
+};
+
 type MonitorDocumentBase = Omit<
 	Monitor,
-	"id" | "userId" | "teamId" | "notifications" | "selectedDisks" | "statusWindow" | "recentChecks" | "createdAt" | "updatedAt"
+	"id" | "userId" | "teamId" | "notifications" | "selectedDisks" | "statusWindow" | "recentChecks" | "escalationRules" | "createdAt" | "updatedAt"
 > & {
 	statusWindow: boolean[];
 	recentChecks: CheckSnapshotDocument[];
 	notifications: Types.ObjectId[];
 	selectedDisks: string[];
+	escalationRules: EscalationRuleDocument[];
 	matchMethod?: MonitorMatchMethod;
 };
 
@@ -169,6 +174,20 @@ const snapshotAuditsSchema = new Schema<CheckAudits>(
 		fcp: { type: snapshotLighthouseAuditSchema },
 		lcp: { type: snapshotLighthouseAuditSchema },
 		tbt: { type: snapshotLighthouseAuditSchema },
+	},
+	{ _id: false }
+);
+
+const escalationRuleSchema = new Schema(
+	{
+		minutesBeforeEscalation: { type: Number, required: true },
+		escalationNotifications: [
+			{
+				type: Schema.Types.ObjectId,
+				ref: "Notification",
+			},
+		],
+		lastEscalationSentAt: { type: Number },
 	},
 	{ _id: false }
 );
@@ -354,6 +373,13 @@ const MonitorSchema = new Schema<MonitorDocument>(
 		recentChecks: {
 			type: [checkSnapshotSchema],
 			default: [],
+		},
+		escalationRules: {
+			type: [escalationRuleSchema],
+			default: [],
+		},
+		lastDownTime: {
+			type: Number,
 		},
 	},
 	{
